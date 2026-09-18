@@ -1,0 +1,113 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: wise-platform-integration-demo
+
+# ---------------------------------------------------------------------------
+# Wise Platform sandbox configuration.
+#
+# NOTHING SECRET IS COMMITTED. The API token is read from an environment
+# variable. Export it before running:
+#
+#   export WISE_API_TOKEN=your-sandbox-token
+#
+# Sandbox tokens are issued from https://wise-sandbox.com (Sandbox V2)
+# ---------------------------------------------------------------------------
+wise:
+  base-url: ${WISE_BASE_URL:https://api.wise-sandbox.com}
+  api-token: ${WISE_API_TOKEN:}
+  profile-id: ${WISE_PROFILE_ID:}
+
+  # Webhook signature verification. Wise signs webhook deliveries; a partner
+  # must verify them before trusting the payload.
+  webhook:
+    public-key: ${WISE_WEBHOOK_PUBLIC_KEY:}
+    # Set false ONLY for local development against your own curl calls.
+    verify-signature: ${WISE_WEBHOOK_VERIFY:true}
+
+  client:
+    connect-timeout-ms: 3000
+    response-timeout-ms: 10000
+
+  # A quote is a held FX rate and it expires. We refuse to fund a transfer
+  # whose quote is within this many seconds of expiry, and re-quote instead.
+  quote:
+    min-remaining-validity-seconds: 30
+
+  reconciliation:
+    enabled: true
+    # Every 5 minutes: pull status for anything not in a terminal state.
+    fixed-delay-ms: 300000
+    # Anything non-terminal and older than this is escalated, not just retried.
+    stale-after-minutes: 60
+
+resilience4j:
+  retry:
+    instances:
+      wiseApi:
+        max-attempts: 3
+        wait-duration: 500ms
+        exponential-backoff-multiplier: 2
+        retry-exceptions:
+          - java.io.IOException
+          - java.util.concurrent.TimeoutException
+          - com.sai.wise.exception.WiseTransientException
+  circuitbreaker:
+    instances:
+      wiseApi:
+        sliding-window-size: 20
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+        permitted-number-of-calls-in-half-open-state: 5
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,circuitbreakers
+  endpoint:
+    health:
+      show-details: always
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+
+logging:
+  level:
+    com.sai.wise: INFO
+
+---
+# ---------------------------------------------------------------------------
+# DEMO PROFILE
+#
+# Runs the entire flow against an in-memory stub of the Wise API, so the
+# service can be cloned and run with no credentials:
+#
+#   mvn spring-boot:run -Dspring-boot.run.profiles=demo
+#
+# The stub models the behaviours that matter - quote expiry, idempotency on
+# customerTransactionId, funding failure on demand, and transfers that change
+# state over time so reconciliation has something real to detect.
+# ---------------------------------------------------------------------------
+spring:
+  config:
+    activate:
+      on-profile: demo
+
+wise:
+  api-token: demo-no-token-required
+  profile-id: demo-profile
+  webhook:
+    # No real signatures in demo mode; never do this outside it.
+    verify-signature: false
+  reconciliation:
+    # Faster sweep so the reconciliation log is visible while you watch.
+    fixed-delay-ms: 15000
+    stale-after-minutes: 5
+
+logging:
+  level:
+    com.sai.wise: INFO
